@@ -1,4 +1,4 @@
-# types.py
+# schema.py
 # Copyright (C) 2012 the ColanderAlchemy authors and contributors
 # <see AUTHORS file>
 #
@@ -23,6 +23,7 @@ from sqlalchemy import (Boolean,
                         Numeric,
                         Time)
 from sqlalchemy.schema import (FetchedValue, ColumnDefault)
+from sqlalchemy.orm import properties
 import colander
 import logging
 
@@ -111,8 +112,11 @@ class SQLAlchemySchemaNode(colander.SchemaNode):
         self.kwargs = kwargs or {}
         self.add_nodes(self.includes, self.excludes, self.overrides)
 
+                
     def add_nodes(self, includes, excludes, overrides):
 
+        # attrs maintains the order that the attributes appear in
+        # the class definition
         for prop in self.inspector.attrs:
 
             name = prop.key
@@ -124,20 +128,59 @@ class SQLAlchemySchemaNode(colander.SchemaNode):
             if name in excludes or (includes and name not in includes):
                 log.debug('Attribute %s skipped imperatively', name)
                 continue
+                
+            name_overrides_copy = overrides.get(name,{}).copy()
 
-            try:
-                getattr(self.inspector.column_attrs, name)
-                factory = 'get_schema_from_column'
+            if isinstance(prop, properties.ColumnProperty):
+                node = self.get_schema_from_column(prop, name_overrides_copy)
+            elif isinstance(prop, properties.RelationshipProperty):
+                node = self.get_schema_from_relationship(prop, name_overrides_copy)
+            elif isinstance(prop, properties.SynonymProperty):
+                node = self.get_schema_from_synonym(prop, name_overrides_copy)
+            else:
+                log.debug('Attribute %s skipped due to not being a ColumnProperty, RelationshipProperty, or SynonymProperty', name)
+                continue;
 
-            except AttributeError:
-                getattr(self.inspector.relationships, name)
-                factory = 'get_schema_from_relationship'
+            if node is not None:
+                self.add(node)
 
-            node = getattr(self, factory)(prop, overrides.get(name,{}).copy())
-            if node is None:
-                continue
 
-            self.add(node)
+    def get_schema_from_synonym(self, prop, overrides):
+        
+        
+        
+        # XXX fix this doc string!
+        
+        
+        
+        """ Build and return a :class:`colander.SchemaNode` for a given Column.
+
+        This method uses information stored in the column within the ``info``
+        that was passed to the Column on creation.  This means that
+        ``Colander`` options can be specified declaratively in
+        ``SQLAlchemy`` models using the ``info`` argument that you can
+        pass to :class:`sqlalchemy.Column`.
+
+        Arguments/Keywords
+
+        prop
+            A given :class:`sqlalchemy.orm.properties.SynonymProperty`
+            instance that represents the column being mapped.
+        overrides
+            XXX Add something.
+        """
+
+        # The name of the SchemaNode is the SynonymProperty key.
+        name = prop.key
+        # get original column being synonym'ized
+        try:
+            column = prop.parent.columns[prop.name]
+        except KeyError:
+            log.debug("no column associated with this synonym")
+            return None
+        info = prop.info # use synonym's info, not original column's
+        return self._get_schema_from_column(name, info, column, overrides)
+
 
     def get_schema_from_column(self, prop, overrides):
         """ Build and return a :class:`colander.SchemaNode` for a given Column.
@@ -160,16 +203,19 @@ class SQLAlchemySchemaNode(colander.SchemaNode):
         # The name of the SchemaNode is the ColumnProperty key.
         name = prop.key
         column = prop.columns[0]
-        declarative_overrides = column.info.get(self.sqla_info_key, {}).copy()
+        info = column.info
+        return self._get_schema_from_column(name, info, column, overrides)
+        
+        
+    def _get_schema_from_column(self, name, info, column, overrides):
+        declarative_overrides = info.get(self.sqla_info_key, {}).copy()
         self.declarative_overrides[name] = declarative_overrides.copy()
 
-        key = 'exclude'
-
-        if key not in overrides and declarative_overrides.pop(key, False):
+        if 'exclude' not in overrides and declarative_overrides.pop('exclude', False):
             log.debug('Column %s skipped due to declarative overrides', name)
             return None
 
-        if overrides.pop(key, False):
+        if overrides.pop('exclude', False):
             log.debug('Column %s skipped due to imperative overrides', name)
             return None
 

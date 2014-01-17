@@ -14,11 +14,18 @@ from sqlalchemy import (Column,
                         Integer,
                         BigInteger,
                         TIMESTAMP,
-                        String)
+                        String,
+                        inspect,
+                        Table,
+                        MetaData)
 import sqlalchemy
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.ext.hybrid import (hybrid_property,
+                                   hybrid_method)
 from sqlalchemy.orm import (mapper,
-                            relationship)
+                            relationship,
+                            synonym,
+                            properties)
 from sqlalchemy.sql.expression import (text, 
                                        func,
                                        true,
@@ -39,7 +46,7 @@ if sys.version_info[0] == 2 and sys.version_info[1] < 7:
 else:
     import unittest
 
-
+#logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger(__name__)
 
 
@@ -533,3 +540,110 @@ class TestsSQLAlchemySchemaNode(unittest.TestCase):
         self.assertEqual(serialized['scalar_number'], str(3))
         self.assertIn('pyfunc_test', serialized)
         self.assertEqual(serialized['pyfunc_test'], str(3))
+
+    def test_synonyms(self):
+        print('-'*80)
+        metadata = MetaData()
+        
+        user = Table('user', metadata,
+            Column('user_id', Integer, primary_key = True),
+            Column('orig_status', String(100), info={"normal":"yes"})
+        )
+        
+        class MyClass(object):
+            def _get_status(self):
+                print('_get_status')
+                return self._status
+            def _set_status(self, value):
+                print('_set_status')
+                self._status = value
+            # overwrite original 'status' with descriptor
+            #status = property(_get_status, _set_status) 
+
+        ta = synonym("orig_status", map_column=False)
+        ta.info = {"e":"f"}
+        mapper(MyClass, user, properties={
+            "status":ta
+        })
+        
+        '''
+        schema = SQLAlchemySchemaNode(MyClass)
+        print(list(schema))
+        
+        temp = MyClass()
+        temp.status = "whut"
+        print(temp.status, type(temp.status))
+        print(temp.orig_status, type(temp.orig_status))
+        
+        #self.assertIn('status', schema)
+        #self.assertIn('user_id', schema)
+        #self.assertIn('_status', schema)
+        
+        inspector = inspect(MyClass)
+        print(dict(inspector.attrs))
+        #print(dict(inspector.column_attrs))
+        #print(dict(inspector.synonyms))
+        
+        print(dir(inspector.column_attrs['user_id'].columns[0]))
+        
+        
+        print(inspector.synonyms['status'].name)
+        print(inspector.synonyms['status'].key)
+        
+        # get original column being synonym'ized
+        print(inspector.synonyms['status'].parent.columns[inspector.synonyms['status'].name].type)
+        
+        print('-'*80)
+        for x in inspector.synonyms:
+            print(dir(x))
+            print(x.name, x.map_column)
+            print ('____properties')
+            for i in ['doc', 'extension_type', 'info', 'is_aliased_class', 'is_attribute', 
+                    'is_clause_element', 'is_instance', 'is_mapper', 'is_property', 
+                    'is_selectable', 'key', 'map_column', 'name', 'parent']:
+                print(i, getattr(x, i), type(getattr(x, i)))
+            print('____other')
+            for i in ['cascade', 'cascade_iterator', 'class_attribute', 'comparator_factory', 
+                    'compare', 'create_row_processor', 'descriptor', 'do_init', 
+                    'init', 'instrument_class', 'is_primary', 
+                    'merge', 'post_instrument_class', 'set_parent', 'setup']:
+                print(i, getattr(x, i), type(getattr(x, i)))
+        '''
+        print('-'*80)
+
+    def test_hybrid(self):
+        Base = declarative_base()
+
+        class Interval(Base):
+            __tablename__ = 'interval'
+
+            id = Column(Integer, primary_key=True, info={'id':'id'})
+            start = Column(Integer, nullable=False, info={'start':'start'})
+            end = Column(Integer, nullable=False, info={'end':'end'})
+
+            def __init__(self, start, end):
+                self.start = start
+                self.end = end
+
+            @hybrid_property
+            def length(self):
+                return self.end - self.start
+
+            @hybrid_method
+            def contains(self,point):
+                return (self.start <= point) & (point < self.end)
+
+            @hybrid_method
+            def intersects(self, other):
+                return self.contains(other.start) | self.contains(other.end)
+                
+            @length.setter
+            def length(self, value):
+                self.end = self.start + value
+        
+        
+        #schema = SQLAlchemySchemaNode(Interval)
+        #print(list(schema))
+        
+        inspector = inspect(Interval)
+        print(dict(inspector.all_orm_descriptors))
